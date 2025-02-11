@@ -2,42 +2,31 @@ const express = require("express");
 const connectDB = require("./config/database");
 const User = require("./models/User");
 const app = express();
+const validateSignUpData = require("../utils/validate");
+const bcrypt = require("bcrypt");
+const validator = require("validator");
+const cookieParser = require("cookie-parser");
+const jwt = require("jsonwebtoken");
+const userAuth = require("./middlewares/auth");
 
 //Middleware to convert json data to object
 app.use(express.json());
+app.use(cookieParser());
 
-app.get("/user", async (req, res) => {
-  const userEmail = req.body.emailId;
-  try {
-    const user = await User.find({ emailId: userEmail });
-    if (user.length === 0) {
-      res.status(404).send("User Not Found");
-    } else {
-      res.send(user);
-    }
-  } catch (err) {
-    res.status(400).send(err.message);
-  }
-});
-
-app.get("/feed", async (req, res) => {
-  try {
-    const user = await User.find({});
-    if (user.length === 0) {
-      res.status(404).send("No user available");
-    } else {
-      res.send(user);
-    }
-  } catch (err) {
-    res.status(400).send(err.message);
-  }
-});
 
 app.post("/signup", async (req, res) => {
   //Create a instance of User modal
-  const user = new User(req.body);
 
+  const { firstName, lastName, emailId, password } = req.body;
   try {
+    validateSignUpData(req);
+    const hashPassword = await bcrypt.hash(password, 10);
+    const user = new User({
+      firstName,
+      lastName,
+      emailId,
+      password: hashPassword,
+    });
     await user.save();
     res.send("User Added Successfully !!");
   } catch (err) {
@@ -45,39 +34,37 @@ app.post("/signup", async (req, res) => {
   }
 });
 
-app.patch("/user", async (req, res) => {
-  const id = req.body.userId;
-  const data = req.body;
-
-  isAllowedUpdate = Object.keys(data).every((key) => ["password","about","mobileNo"].includes(key))
- 
-
+app.post("/login", async (req, res) => {
+  const { emailId, password } = req.body;
   try {
-    if(!isAllowedUpdate)
-        {
-            throw new Error("You cannot update theses field")
-            //.status(400).send("Updates not allowed")
-        }
-    const user = await User.findByIdAndUpdate(id, data, {
-      returnDocument: "after",
-      runValidators: true
-    });
-    console.log(user);
-    res.send("User updated successfully");
+    if (!validator.isEmail(emailId)) {
+      throw new Error("Email is not in format");
+    }
+    const user = await User.findOne({ emailId: emailId });
+    if (!user) {
+      throw new Error("Invalid Credential");
+    }
+    const isPasswordValid = await user.validatePassword(password)
+    if (isPasswordValid) {
+      const token = await user.getJwt()
+      res.cookie("token", token,{expires:new Date(Date.now()+ 10 * 900000)});
+      res.send("Login Successful");
+    } else {
+      throw new Error("Invalid Credential");
+    }
+  } catch (err) {
+    res.status(400).send(err.message);
+  }
+});
+app.get("/profile",userAuth, async (req, res) => {
+  try {
+    const user = req.user;
+    res.send(user);
   } catch (err) {
     res.status(400).send(err.message);
   }
 });
 
-app.delete("/user", async (req, res) => {
-  try {
-    const id = req.body.userId;
-    await User.findByIdAndDelete(id);
-    res.send("User deleted successfully");
-  } catch (err) {
-    res.status(400).send("Something went wrong" + err.message);
-  }
-});
 
 connectDB()
   .then(() => {
